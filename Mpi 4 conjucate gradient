@@ -1,0 +1,530 @@
+#include <cstdio>
+#include <cstdlib>
+#include <iostream>
+#include <cstring>
+#include <vector>
+#include <cmath>
+#include <fstream>
+#include <ctime>
+#include "gnuplot.h"
+#include <mpi.h>
+using namespace std;
+#define n 200// must even
+#define rel_tol  1e-7
+
+////////////functions prototyping
+float dotProduct(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w);
+vector<vector<vector<float> > > vec_plus_vec(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w);
+vector<vector<vector<float> > > vec_minus_vec(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w);
+vector<vector<vector<float> > > sc_mul_vec(float a, vector<vector<vector<float> > >& v);
+vector<vector<vector<float> > > vecCopy(vector<vector<vector<float> > >& v);
+vector<vector<vector<float> > > A_mul(vector<vector<vector<float> > >& v, int MyRank);
+void printVector(const vector<vector<vector<float> > >& pV);
+void printVector1D(const vector<float>  &pV);
+vector<float>  trans0(vector<vector<vector<float> > >& v, int h, int MyRank); //0 =i 1 ==j 
+vector<vector<vector<float> > > inver0(vector<float> & v, int h, vector<vector<vector<float> > >& w, int MyRank); //0 =i 1 ==j 
+vector<float>  transn(vector<vector<vector<float> > >& v, int h, int MyRank); //0 =j 1 ==i 
+vector<vector<vector<float> > > invern(vector<float> & v, int h, vector<vector<vector<float> > >& w, int MyRank); //0 =j 1 ==i 
+////////////
+
+int main(int argc, char *argv[]){
+
+  /////////////define out put file/////////////////////////
+  const string data = "test.dat";    
+  ofstream f( data.c_str() );
+  
+  /////////////////setting mpi mpi mpi mpi////////////////
+  int NRank, MyRank;
+  
+  MPI_Init( &argc, &argv );
+  
+  MPI_Comm_rank( MPI_COMM_WORLD, &MyRank );// give processor id = myrank
+  
+  MPI_Comm_size( MPI_COMM_WORLD, &NRank );// give total processor number = nrank
+  
+  // this test assumes only two ranks
+  if ( NRank != 4 )
+    {
+      fprintf( stderr, "ERROR: NRank (%d) != 4\n", NRank );
+      MPI_Abort( MPI_COMM_WORLD, 1 );
+    }
+  MPI_Request Request[2];//mpi
+  MPI_Request Request2[2];//mpi
+  ////////////// end mpi mpi mpi //////////////////
+  
+  ///////// Setting variables and constant
+  float L = 1.0;                     // the length, width and height of the cube geometrically
+  float delta = (L / float(n+1)) ;
+  
+  // Line space of xyz plane:
+  vector<float>  x(n/2+2, 0.0);
+  vector< vector<float> > xy;
+  xy.assign(n/2+2, x);
+  vector< vector< vector<float> > > xyz;
+  xyz.assign(n+2, xy);
+  
+   // Line space of the X,Y,Z aixs
+  vector<float>  X(n, 0.0);      
+  for(int i=1; i<= n-1; i++) X[i]=X[i-1]+delta;
+
+  //  Impose boundary conditions into source b
+  vector<float>  b(n/2+2, 0.0);
+  vector< vector<float> > bb;
+  bb.assign(n/2+2, b);
+  vector< vector< vector<float> > > bbb;
+  bbb.assign(n+2, bb);
+
+ //  Impose boundary conditions into source res
+  vector<float>  r(n/2+2, 0.0);
+  vector< vector<float> > re;
+  re.assign(n/2+2, r);
+  vector< vector< vector<float> > > res;
+  res.assign(n+2, re);
+
+  //  Impose boundary conditions into source ddd
+  vector<float>  d(n/2+2, 0.0);
+  vector< vector<float> > dd;
+  dd.assign(n/2+2, d);
+  vector< vector< vector<float> > > ddd;
+  ddd.assign(n+2, dd);
+
+  vector<float>  tem(n/2+2, 0.0);
+  vector< vector<float> > temp;
+  temp.assign(n/2+2, tem);
+  vector< vector< vector<float> > > tempe;
+  tempe.assign(n+2, temp);
+  
+  vector<float>  rn(n/2+2, 0.0);
+  vector< vector<float> > rnn;
+  rnn.assign(n/2+2, rn);
+  vector< vector< vector<float> > > R_n;
+  R_n.assign(n+2, rnn);
+
+  vector<float>  a(n/2+2, 0.0);
+  vector< vector<float> > an;
+  an.assign(n/2+2, a);
+  vector< vector< vector<float> > > AU;
+  AU.assign(n+2, an);
+  
+  vector<float>  surf1((n)*(n/2), 0.0);
+
+  vector<float>  surf1r((n)*(n/2), 0.0);
+
+  vector<float>  surf2((n)*(n/2), 0.0);
+
+  vector<float>  surf2r((n)*(n/2), 0.0);
+
+  //////////// Done defining //////////////////
+  
+  /// write "charge"
+  for(int j= 0; j<=n/2+1; j++){
+    for(int i= 0; i<=n/2+1; i++){
+      bbb[n/2][j][i] += 2;
+    }
+  }
+  
+  //////////////CG initialized///////////////////
+  float bdotb = 0.0;
+  float alpha = 1.0;
+  tempe  = A_mul(xyz, MyRank);
+  res    = vec_minus_vec(bbb, tempe);
+  ddd    = vecCopy(res);
+  bdotb  = dotProduct(bbb, bbb);
+
+  struct timespec start, end;
+  double time_used;
+  if(MyRank == 0){
+  clock_gettime(CLOCK_MONOTONIC, &start); // start clock
+  }
+
+  //////////////CG///////////////////
+  while(alpha >rel_tol ){//alpha >rel_tol 
+    float R_dot_R = dotProduct(res, res);    /// square of the residual vector
+    alpha = R_dot_R / (bdotb + 1.0e-10 );     /// do nothing if converged1.0e-8
+    AU = A_mul(ddd, MyRank);
+    double lambda = dotProduct(res, res) / (dotProduct(ddd, AU));
+    tempe = sc_mul_vec(lambda, ddd);
+    xyz = vec_plus_vec(xyz, tempe);
+    tempe = sc_mul_vec(lambda, AU);
+    R_n = vec_minus_vec(res, tempe);
+    float mu = dotProduct(R_n, R_n) / R_dot_R;
+    tempe = sc_mul_vec(mu, ddd);
+    ddd = vec_plus_vec(R_n, tempe);
+    res = vecCopy(R_n);
+    
+    if( MyRank == 0 ){
+      surf1 = trans0(ddd, -1, MyRank);
+      surf2 = transn(ddd, -1, MyRank);
+
+      MPI_Isend( &surf1[0]  , n*n/2 , MPI_FLOAT , 1, 10, MPI_COMM_WORLD, &Request[1] );
+
+      MPI_Irecv( &surf2r[0] , n*n/2 , MPI_FLOAT, 2,  2,  MPI_COMM_WORLD, &Request[0] );
+      MPI_Waitall(2, Request, MPI_STATUSES_IGNORE);
+      ddd= invern(surf2r, -1, ddd, MyRank);
+      
+      MPI_Isend( &surf2[0],   (n)*(n/2) , MPI_FLOAT, 2,  20, MPI_COMM_WORLD, &Request2[1] );
+      
+      MPI_Irecv( &surf1r[0] , (n)*(n/2) , MPI_FLOAT, 1,  1, MPI_COMM_WORLD,  &Request2[0] );
+      MPI_Waitall(2, Request2, MPI_STATUSES_IGNORE);
+      ddd= inver0(surf1r, -1, ddd, MyRank);   
+    }
+    
+    if( MyRank == 1 ){
+      surf1 = transn(ddd, 1, MyRank);
+      surf2 = transn(ddd, 0, MyRank);
+      MPI_Isend( &surf2[0], n*n/2 , MPI_FLOAT, 3, 13, MPI_COMM_WORLD, &Request[1] );
+      
+      MPI_Irecv( &surf1r[0] , n*n/2 , MPI_FLOAT ,  0, 10,  MPI_COMM_WORLD,  &Request[0] );
+      MPI_Waitall(2, Request, MPI_STATUSES_IGNORE );
+      ddd= invern(surf1r, 1, ddd, MyRank);
+
+      MPI_Isend( &surf1[0],   (n)*(n/2) , MPI_FLOAT,  0,  1,  MPI_COMM_WORLD,  &Request2[1] );
+
+      MPI_Irecv( &surf2r[0] , (n)*(n/2) , MPI_FLOAT,  3, 31, MPI_COMM_WORLD, &Request2[0] );
+      MPI_Waitall(2, Request2, MPI_STATUSES_IGNORE);
+      ddd= invern(surf2r, 0, ddd, MyRank);
+      
+    }
+
+    if( MyRank == 2 ){
+      surf1 = trans0(ddd, 1, MyRank);
+      surf2 = trans0(ddd, 0, MyRank);
+      MPI_Isend( &surf1[0],  n*n/2, MPI_FLOAT, 0,  2,  MPI_COMM_WORLD, &Request[1] );
+      
+      MPI_Irecv( &surf2r[0],   (n)*(n/2), MPI_FLOAT, 3, 32,  MPI_COMM_WORLD, &Request[0] );
+      MPI_Waitall(2, Request, MPI_STATUSES_IGNORE);
+      ddd= inver0(surf2r, 0, ddd, MyRank);
+
+      MPI_Isend( &surf2[0],    (n)*(n/2), MPI_FLOAT, 3, 23,  MPI_COMM_WORLD, &Request2[1] );
+      
+      MPI_Irecv( &surf1r[0],   (n)*(n/2), MPI_FLOAT, 0, 20,  MPI_COMM_WORLD, &Request2[0] );
+      MPI_Waitall(2, Request2, MPI_STATUSES_IGNORE);
+      ddd= inver0(surf1r, 1, ddd, MyRank);
+      
+    }
+    
+    if( MyRank == 3 ){
+      surf1 = trans0(ddd, -1, MyRank);
+      surf2 = transn(ddd, -1, MyRank);
+      MPI_Isend( &surf2[0],   (n)*(n/2),  MPI_FLOAT, 2, 32, MPI_COMM_WORLD,  &Request[1] );
+      
+      MPI_Irecv( &surf1r[0],  (n)*(n/2),  MPI_FLOAT, 1, 13, MPI_COMM_WORLD,  &Request[0] );
+      MPI_Waitall(2, Request, MPI_STATUSES_IGNORE);
+      ddd= inver0(surf1r, -1, ddd, MyRank);
+
+      MPI_Isend( &surf1[0],   (n)*(n/2),  MPI_FLOAT, 1, 31, MPI_COMM_WORLD,  &Request2[1] );
+      
+      MPI_Irecv( &surf2r[0],  (n)*(n/2),  MPI_FLOAT, 2, 23, MPI_COMM_WORLD,  &Request2[0] );
+      MPI_Waitall(2, Request2, MPI_STATUSES_IGNORE);
+      ddd= invern(surf2r, -1, ddd, MyRank);
+    }
+    
+  }
+  //////////////CG end///////////////////
+
+  if(MyRank == 0){
+    clock_gettime(CLOCK_MONOTONIC, &end); // end clock
+    struct timespec timemer = diff(start, end);
+    printf("Computed time: %f seconds \n", timemer.tv_sec + (double) timemer.tv_nsec / 1000000000.0);
+  }
+
+  ////////////out put data to file/////////////
+
+  vector<float> Send(n*n*n/4, 0.0);
+  vector<float> Recive(n*n*n, 0.0);
+
+  for(int k=1; k<=n; k++){
+    for(int j=1; j<=n/2; j++){
+      for(int i=1; i<=n/2; i++){
+	Send[(k-1)*n*n/4+(j-1)*n/2+(i-1)]=xyz[k][j][i];
+      }
+    }
+  }
+  
+  MPI_Gather( &Send[0], n*n*n/4, MPI_FLOAT,
+	      &Recive[0], n*n*n/4, MPI_FLOAT,
+	      0, MPI_COMM_WORLD );
+
+ if(MyRank == 0){
+   
+   vector<float>  xnew(n, 0.0);
+   vector< vector<float> > xynew;
+   xynew.assign(n, xnew);
+   vector< vector< vector<float> > > xyznew;
+   xyznew.assign(n, xynew);
+
+   
+   for(int ww=0; ww<4; ww++){
+     for(int k=0; k<=n-1; k++){
+       for(int j=0; j<=n/2-1; j++){
+	 for(int i=0; i<=n/2-1; i++){
+	   if(ww==1)
+	     xyznew[k][j][i]         = Recive[k*n*n/4+j*n/2+i + ww*n*n*n/4];
+	   if(ww==0)
+	     xyznew[k][j][i+n/2]     = Recive[k*n*n/4+j*n/2+i + ww*n*n*n/4];
+	   if(ww==3)
+	     xyznew[k][j+n/2][i]     = Recive[k*n*n/4+j*n/2+i + ww*n*n*n/4];
+	   if(ww==2)
+	     xyznew[k][j+n/2][i+n/2] = Recive[k*n*n/4+j*n/2+i + ww*n*n*n/4];
+	 }
+       }
+     }//end k
+   }
+   
+   for(int k=0; k<=n-1; k=k+n/2){
+     for(int j=0; j<=n-1; j++){
+       for(int i=0; i<=n-1; i++){
+	 f << X[i] << " " << X[j] << " " << X[k] << " " << xyznew[k][j][i] << " \n ";  //output test.dat
+       }
+       f <<" \n ";
+     }
+     f <<" \n ";
+   }// end k for
+  
+   gnuplot p; //plot figure
+   p("set pm3d ");
+   p("set hidden3d");
+   p("set xlabel \'x\' ");
+   p("set ylabel \'y\' ");
+   p("set ylabel \'z\' ");
+   p("set xrange[0:1]");
+   p("set yrange[0:1]");
+   p("set zrange[0:1]");
+   p("set size square");
+   p("set palette rgbformulae 22, 13, -31");
+   p("splot \"./test.dat\"  ");
+
+ }//end MyRank=0
+ 
+ MPI_Finalize();//mpi
+   
+ return EXIT_SUCCESS  ;
+}
+
+/////////////////////////////////////////////////////////////////////////
+float dotProduct(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w){
+   float sum = 0;
+   for(int k = 1; k <= n; k++){
+     for(int j = 1; j <= n/2; j++){
+       for(int i = 1; i <= n/2; i++){
+         sum += v[k][j][i] * w[k][j][i];
+       }
+     }
+   }
+   return sum;
+}
+
+//////////////////////////////////////////////////////////////////////////
+vector<vector<vector<float> > > vec_plus_vec(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w){
+  vector<float>  t(n/2+2, 0.0);
+  vector< vector<float> > tt;
+  tt.assign(n/2+2, t);
+  vector< vector< vector<float> > > ttt;
+  ttt.assign(n+2, tt);
+  for(int k = 1; k <= n; k++){
+    for(int j = 1; j <= n/2; j++){
+      for(int i = 1; i <= n/2; i++){
+	ttt[k][j][i] = v[k][j][i] + w[k][j][i];
+      }
+    }
+  }
+   return ttt;
+}
+//////////////////////////////////////////////////////////////////////////
+vector<vector<vector<float> > > vec_minus_vec(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w){
+  vector<float>  z(n/2+2, 0.0);
+  vector< vector<float> > zz;
+  zz.assign(n/2+2, z);
+  vector< vector< vector<float> > > zzz;
+  zzz.assign(n+2, zz);
+  for(int k = 1; k <= n; k++){
+   for(int j = 1; j <= n/2; j++){
+      for(int i = 1; i <= n/2; i++){
+         zzz[k][j][i] = v[k][j][i] - w[k][j][i];
+      }
+   }
+  }
+  return zzz;
+}
+//////////////////////////////////////////////////////////////////////////
+vector<vector<vector<float> > > sc_mul_vec(float a, vector<vector<vector<float> > >& v){
+  vector<float>  p(n/2+2, 0.0);
+  vector< vector<float> > pp;
+  pp.assign(n/2+2, p);
+  vector< vector< vector<float> > > ppp;
+  ppp.assign(n+2, pp);
+  for(int k = 1; k <= n; k++){
+    for(int j = 1; j <= n/2; j++){
+      for(int i = 1; i <= n/2; i++){
+	ppp[k][j][i] = a * v[k][j][i];
+	}
+    }
+  }
+  return ppp;
+}
+//////////////////////////////////////////////////////////////////////////
+vector<vector<vector<float> > > vecCopy(vector<vector<vector<float> > >& v){
+  vector<float>  l(n/2+2, 0.0);
+  vector< vector<float> > ll;
+  ll.assign(n/2+2, l);
+  vector< vector< vector<float> > > lll;
+  lll.assign(n+2, ll);
+  for(int k = 0; k <= n+1; k++){
+    for(int j = 0; j <= n/2+1; j++){
+      for(int i = 0; i <= n/2+1; i++){
+        lll[k][j][i] = v[k][j][i];
+      }
+    }
+  }
+  return lll;
+}
+
+//////////////////////////////////////////////////////////////////////////
+vector<vector<vector<float> > > A_mul(vector<vector<vector<float> > > & v, int MyRank){   /// minus Laplacian with Boundary Condition
+  vector<float>  e(n/2+2, 0.0);
+  vector< vector<float> > ee;
+  ee.assign(n/2+2, e);
+  vector< vector< vector<float> > > eee;
+  eee.assign(n+2, ee);
+
+  
+  /// doing the Neuman condition at the south and north boundaries
+  if(MyRank == 0 || MyRank == 2){
+    for(int k = 1; k <= n; k++){
+      for(int j = 1; j <= n/2; j++){
+	v[k][j][0]  = v[k][j][1];    //01 23 transfer
+      }
+    }
+  }// end if
+
+  if(MyRank == 1 || MyRank == 3){
+    for(int k = 1; k <= n; k++){
+      for(int j = 1; j <= n/2; j++){
+	v[k][j][n/2+1] = v[k][j][n/2];   //01 23 transfer
+      }
+    }
+  }// end if
+  
+  if(MyRank == 0 || MyRank == 1){
+    for(int k = 1; k <= n; k++){
+      for(int i = 1; i <= n/2; i++){
+	v[k][n/2+1][i] = v[k][n/2][i];    //13 02 transfer
+      }
+    }
+  }// end if
+
+  if(MyRank == 2 || MyRank == 3){
+    for(int k = 1; k <= n; k++){
+      for(int i = 1; i <= n/2; i++){
+	v[k][0][i]  = v[k][1][i];    //13 02 transfer
+      }
+    }
+  }// end if
+  
+  
+  /// calculating minus Laplacian
+  for(int k = 1; k <= n; k++){
+    for(int j = 1; j <= n/2; j++){
+      for(int i = 1; i <= n/2; i++){
+	eee[k][j][i] = v[k][j][i]-(v[k][j][i+1] + v[k][j][i-1] + v[k + 1][j][i] + v[k - 1][j][i] + v[k][j + 1][i] + v[k][j - 1][i] ) / 6.0;
+      }
+    }
+  }
+
+  return eee;
+}
+
+///////////////////pirnt2D Vector////////////
+void printVector1D(const vector<float> &pV){
+  cout << " {{  ";
+  for(int j = 0; j <= (n)*(n/2)-1; j++){
+    cout << pV[j] << " ";
+  }
+  cout << "  }}" << endl;
+}
+
+///////////////////pirnt3D Vector////////////
+void printVector(const vector<vector<vector<float> > > &pV){
+  for(int k = 0; k <= n+1; k++){
+    cout << " {{  " << endl;
+    for(int j = 0; j <= n/2+1; j++){
+      cout << " {";
+      for(int i = 0; i <= n/2+1; i++){
+	cout << pV[k][j][i] << " ";
+      }
+      cout << " }" << endl;
+    }
+    cout << "  }}" << endl;
+  }
+  
+}
+
+
+//////////////mpi copy surface////////////////////////////
+vector<float> trans0(vector<vector<vector<float> > >& v, int h, int MyRank){ //0 =i 1 ==j 
+  vector<float>  uu((n)*(n/2), 0.0);
+
+  for(int k = 1; k <= n; k++){
+    for(int ij = 1; ij <= n/2; ij++){
+      if(MyRank == 0 || (MyRank == 2 && h == 0 )){
+	uu[k*ij-1] = v[k][ij][1];
+      }
+      if(MyRank == 3 || (MyRank == 2 && h == 1 )){
+	uu[k*ij-1] = v[k][1][ij];
+      }
+    }
+  }
+  
+  return uu;
+}
+
+
+/////////////mpi copy recived surface////////////////////
+vector<vector<vector<float> > > inver0(vector<float>& v, int h, vector<vector<vector<float> > >& w, int MyRank){ //0 =i 1 ==j 
+  for(int k = 1; k <= n; k++){
+    for(int ij = 1; ij <= n/2; ij++){
+      if(MyRank == 1 || (MyRank == 2 && h == 0) ){
+	w[k][ij][0] = v[k*ij-1];
+      }
+      if(MyRank == 3 || (MyRank == 2 && h == 1) ){
+	w[k][0][ij] = v[k*ij-1];
+      }
+    }
+  }
+  
+  return w;
+}
+
+//////////////mpi copy surface////////////////////////////
+vector<float> transn(vector<vector<vector<float> > >& v, int h, int MyRank){ //0 =j 1 ==i 
+  vector<float>  uu((n)*(n/2), 0.0);
+
+  for(int k = 1; k <= n; k++){
+    for(int ij = 1; ij <= n/2; ij++){
+      if(MyRank == 1 || (MyRank == 1 && h == 0 )){
+	uu[k*ij-1] = v[k][n/2][ij];
+      }
+      if(MyRank == 3 || (MyRank == 1 && h == 1 )){
+	uu[k*ij-1] = v[k][ij][n/2];
+      }
+    }
+  }
+  
+  return uu;
+}
+
+
+/////////////mpi copy recived surface////////////////////
+ vector<vector<vector<float> > > invern(vector<float>& v, int h, vector<vector<vector<float> > >& w, int MyRank){ //0 =j 1 ==i 
+  for(int k = 1; k <= n; k++){
+    for(int ij = 1; ij <= n/2; ij++){
+      if(MyRank == 0 || (MyRank == 1 && h == 0 )){
+	w[k][n/2+1][ij] = v[k*ij-1];
+      }
+      if(MyRank == 3 || (MyRank == 1 && h == 1)){
+	w[k][ij][n/2+1] = v[k*ij-1];
+      }
+    }
+  }
+  return w;
+ }
