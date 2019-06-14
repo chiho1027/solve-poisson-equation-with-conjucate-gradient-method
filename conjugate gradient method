@@ -1,0 +1,293 @@
+#include <cstdio>
+#include <cstdlib>
+#include <iostream>
+#include <cstring>
+#include <vector>
+#include <cmath>
+#include <fstream>
+#include <ctime>
+#include "gnuplot.h"
+
+#define n 20// n = nx = ny = nz , number of grid interval in x, y ,z axis
+#define rel_tol  1e-7
+
+using namespace std;
+////////////functions prototyping
+float dotProduct(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w);
+vector<vector<vector<float> > > vec_plus_vec(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w);
+vector<vector<vector<float> > > vec_minus_vec(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w);
+vector<vector<vector<float> > > sc_mul_vec(float a, vector<vector<vector<float> > >& v);
+vector<vector<vector<float> > > vecCopy(vector<vector<vector<float> > >& v);
+vector<vector<vector<float> > > A_mul(vector<vector<vector<float> > >& v);
+void printVector(const vector<vector<vector<float> > >& pV);
+////////////
+
+int main(){
+  
+    ///////// Setting variables and constant
+  float L = 1.0;                     // the length, width and height of the cube geometrically
+  float delta = (L / float(n+1)) ;
+  //float rel_tol = 1e-4;
+  
+  // Line space of xyz plane:
+  vector<float>  x(n+2, 0.0);
+  vector< vector<float> > xy;
+  xy.assign(n+2, x);
+  vector< vector< vector<float> > > xyz;
+  xyz.assign(n+2, xy);
+  
+   // Line space of the X,Y,Z aixs
+  vector<float>  X(n+2, 0.0);      
+  for(int i=1; i<= n+1; i++) X[i]=X[i-1]+delta;
+
+  //  Impose boundary conditions into source b
+  vector<float>  b(n+2, 0.0);
+  vector< vector<float> > bb;
+  bb.assign(n+2, b);
+  vector< vector< vector<float> > > bbb;
+  bbb.assign(n+2, bb);
+
+  //define out put file
+  const string data = "test.dat";    
+  ofstream f( data.c_str() );
+
+ //  Impose boundary conditions into source res
+  vector<float>  r(n+2, 0.0);
+  vector< vector<float> > re;
+  re.assign(n+2, r);
+  vector< vector< vector<float> > > res;
+  res.assign(n+2, re);
+
+  //  Impose boundary conditions into source ddd
+  vector<float>  d(n+2, 0.0);
+  vector< vector<float> > dd;
+  dd.assign(n+2, d);
+  vector< vector< vector<float> > > ddd;
+  ddd.assign(n+2, dd);
+
+  vector<float>  tem(n+2, 0.0);
+  vector< vector<float> > temp;
+  temp.assign(n+2, tem);
+  vector< vector< vector<float> > > tempe;
+  tempe.assign(n+2, temp);
+  
+  vector<float>  rn(n+2, 0.0);
+  vector< vector<float> > rnn;
+  rnn.assign(n+2, rn);
+  vector< vector< vector<float> > > R_n;
+  R_n.assign(n+2, rnn);
+
+  vector<float>  a(n+2, 0.0);
+  vector< vector<float> > an;
+  an.assign(n+2, a);
+  vector< vector< vector<float> > > AU;
+  AU.assign(n+2, an);
+  //////////// Done defining //////////////////
+  
+  /// write "charge"
+  for(int j= 0; j<=n+1; j++){
+    for(int i= 0; i<=n+1; i++){
+      bbb[i][j][2] += X[i];
+    }
+  }
+  //////////////CG initialized///////////////////
+  float bdotb = 0.0;
+  float alpha = 1.0;
+  int   iter  = 0;
+  tempe  = A_mul(xyz);
+  res    = vec_minus_vec(bbb, tempe);
+  ddd    = vecCopy(res);
+  bdotb  = dotProduct(bbb, bbb);
+
+  struct timespec start, end;
+  double time_used;
+  clock_gettime(CLOCK_MONOTONIC, &start); // start clock
+
+  //////////////CG///////////////////
+  while(alpha >rel_tol){//error > rel_tol
+    float R_dot_R = dotProduct(res, res);    /// square of the residual vector
+    alpha = R_dot_R / (bdotb + 1.0e-10 );     /// do nothing if converged1.0e-8
+    AU = A_mul(ddd);
+    double lambda = dotProduct(res, res) / (dotProduct(ddd, AU));/////????
+    tempe = sc_mul_vec(lambda, ddd);
+    xyz = vec_plus_vec(xyz, tempe);
+    tempe = sc_mul_vec(lambda, AU);
+    R_n = vec_minus_vec(res, tempe);
+    float mu = dotProduct(R_n, R_n) / R_dot_R;
+    tempe = sc_mul_vec(mu, ddd);
+    ddd = vec_plus_vec(R_n, tempe);
+    res = vecCopy(R_n);
+    iter++;
+  }
+   //////////////CG end///////////////////
+
+  
+  clock_gettime(CLOCK_MONOTONIC, &end); // end clock
+  struct timespec timemer = diff(start, end);
+  printf("Computed time: %f seconds \n", timemer.tv_sec + (double) timemer.tv_nsec / 1000000000.0);
+  
+  ////////////out put data to file/////////////
+  for(int k=0; k<=n+1; k=k+ n/2){
+    for(int j=0; j<=n+1; j++){
+      for(int i=0; i<=n+1; i++){
+	f << X[i] << " " << X[j] << " " << X[k] << " " << xyz[i][j][k] << " \n ";  //output test.data
+      }
+      f <<" \n ";
+    }
+    f <<" \n ";
+  }
+  
+  gnuplot p; //plot figure
+  //p("set dgrid3d 100,100,1");//bar
+  p("set pm3d ");
+  p("set hidden3d");
+  //p("set view 180, 90 , 1, 1 ");
+  p("set xlabel \'x\' ");
+  p("set ylabel \'y\' ");
+  p("set ylabel \'z\' ");
+  p("set xrange[0:1]");
+  p("set yrange[0:1]");
+  p("set zrange[0:1]");
+  p("set size square");
+  // p("set pm3d map");
+  p("set palette rgbformulae 22, 13, -31");
+  p("splot \"./test.dat\"  ");
+  
+  return 0;
+}
+
+/////////////////////////////////////////////////////////////////////////
+float dotProduct(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w){
+   float sum = 0;
+   for(int k = 1; k <= n; k++){
+     for(int j = 1; j <= n; j++){
+       for(int i = 1; i <= n; i++){
+         sum += v[i][j][k] * w[i][j][k];
+       }
+     }
+   }
+   return sum;
+}
+
+//////////////////////////////////////////////////////////////////////////
+vector<vector<vector<float> > > vec_plus_vec(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w){
+  vector<float>  t(n+2, 0.0);
+  vector< vector<float> > tt;
+  tt.assign(n+2, t);
+  vector< vector< vector<float> > > ttt;
+  ttt.assign(n+2, tt);
+  for(int k = 1; k <= n; k++){
+    for(int j = 1; j <= n; j++){
+      for(int i = 1; i <= n; i++){
+	ttt[i][j][k] = v[i][j][k] + w[i][j][k];
+      }
+    }
+  }
+   return ttt;
+}
+//////////////////////////////////////////////////////////////////////////
+vector<vector<vector<float> > > vec_minus_vec(vector<vector<vector<float> > >& v, vector<vector<vector<float> > >& w){
+  vector<float>  z(n+2, 0.0);
+  vector< vector<float> > zz;
+  zz.assign(n+2, z);
+  vector< vector< vector<float> > > zzz;
+  zzz.assign(n+2, zz);
+  for(int k = 1; k <= n; k++){
+   for(int j = 1; j <= n; j++){
+      for(int i = 1; i <= n; i++){
+         zzz[i][j][k] = v[i][j][k] - w[i][j][k];
+      }
+   }
+  }
+  return zzz;
+}
+//////////////////////////////////////////////////////////////////////////
+vector<vector<vector<float> > > sc_mul_vec(float a, vector<vector<vector<float> > >& v){
+  vector<float>  p(n+2, 0.0);
+  vector< vector<float> > pp;
+  pp.assign(n+2, p);
+  vector< vector< vector<float> > > ppp;
+  ppp.assign(n+2, pp);
+  for(int k = 1; k <= n; k++){
+    for(int j = 1; j <= n; j++){
+      for(int i = 1; i <= n; i++){
+	ppp[i][j][k] = a * v[i][j][k];
+	}
+    }
+  }
+  return ppp;
+}
+//////////////////////////////////////////////////////////////////////////
+vector<vector<vector<float> > > vecCopy(vector<vector<vector<float> > >& v){
+  vector<float>  l(n+2, 0.0);
+  vector< vector<float> > ll;
+  ll.assign(n+2, l);
+  vector< vector< vector<float> > > lll;
+  lll.assign(n+2, ll);
+  for(int k = 0; k <= n+1; k++){
+    for(int j = 0; j <= n+1; j++){
+      for(int i = 0; i <= n+1; i++){
+        lll[i][j][k] = v[i][j][k];
+      }
+    }
+  }
+  return lll;
+}
+
+//////////////////////////////////////////////////////////////////////////
+vector<vector<vector<float> > > A_mul(vector<vector<vector<float> > > & v){   /// minus Laplacian with Boundary Condition
+  vector<float>  e(n+2, 0.0);
+  vector< vector<float> > ee;
+  ee.assign(n+2, e);
+  vector< vector< vector<float> > > eee;
+  eee.assign(n+2, ee);
+  
+  /// doing the Neuman condition at the south and north boundaries
+  for(int j = 1; j <= n; j++){
+    for(int i = 1; i <= n; i++){
+      v[i][j][0]  = v[i][j][1];    //top
+      v[i][j][n+1] = v[i][j][n];    //bottum
+    }
+  }
+  /*
+  for(int k = 1; k <= n; k++){
+    for(int i = 1; i <= n; i++){
+      v[i][0][k]   = v[i][1][k];    //e
+      v[i][n+1][k] = v[i][n][k];    //w
+    }
+  }
+  for(int k = 1; k <= n; k++){
+    for(int j = 1; j <= n; j++){
+      v[0][j][k]   = v[1][j][k];    //s
+      v[n+1][j][k] = v[n][j][k];    //n
+    }
+  }
+  */
+  
+  /// calculating minus Laplacian
+  for(int k = 1; k <= n; k++){
+    for(int j = 1; j <= n; j++){
+      for(int i = 1; i <= n; i++){
+	eee[i][j][k] = v[i][j][k]-(v[i][j][k+1] + v[i][j][k-1] + v[i + 1][j][k] + v[i - 1][j][k] + v[i][j + 1][k] + v[i][j - 1][k] ) / 6.0;
+      }
+    }
+  }
+
+  return eee;
+}
+
+
+void printVector(const vector<vector<vector<float> > > &pV){
+  for(int k = 0; k <= n+1; k++){
+    cout << " {{  " << endl;
+    for(int j = 0; j <= n+1; j++){
+      cout << " {";
+      for(int i = 0; i <= n+1; i++){
+	cout << pV[i][j][k] << " ";
+      }
+      cout << " }" << endl;
+    }
+    cout << "  }}" << endl;
+  }
+  
+}
